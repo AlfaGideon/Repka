@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мини-приложение: Репетитор по русскому</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f7f7f7; margin: 0; padding: 0; }
+        .container { max-width: 420px; margin: 24px auto; background: #fff; border-radius: 10px; box-shadow: 0 2px 8px #0001; padding: 18px 10px 24px 10px; }
+        h1 { color: #2d3a4b; font-size: 1.5em; }
+        h2 { font-size: 1.1em; margin-bottom: 0.2em; }
+        .theme-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+        .theme-btn { background: #e3eaff; color: #2d3a4b; border: none; padding: 8px 14px; border-radius: 6px; font-size: 1em; cursor: pointer; }
+        .theme-btn.selected, .theme-btn:hover { background: #4a90e2; color: #fff; }
+        .lesson-block { background: #f0f4fa; border-radius: 8px; padding: 10px 12px; margin-bottom: 18px; }
+        .question-block { margin-bottom: 18px; }
+        .options { display: flex; flex-direction: column; gap: 8px; }
+        .option-btn { background: #4a90e2; color: #fff; border: none; padding: 10px 16px; border-radius: 6px; font-size: 1em; cursor: pointer; }
+        .option-btn:hover { background: #357ab8; }
+        .result { margin-top: 12px; font-weight: bold; }
+        .score { margin: 10px 0; font-size: 1.1em; }
+        .history-block { background: #f9f9f9; border-radius: 8px; padding: 10px; margin-top: 18px; }
+        .mini-game { margin: 18px 0; }
+        .profile { margin: 10px 0 18px 0; font-size: 1em; }
+        .send-btn { background: #27ae60; color: #fff; border: none; padding: 10px 18px; border-radius: 6px; font-size: 1em; cursor: pointer; margin-top: 10px; }
+        .send-btn:hover { background: #219150; }
+        @media (max-width: 500px) {
+            .container { max-width: 98vw; padding: 6vw 2vw; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Репетитор по русскому языку</h1>
+    <div class="profile" id="profile"></div>
+    <div id="achievements" style="margin-bottom:10px;"></div>
+        <div class="theme-list" id="theme-list"></div>
+        <div class="lesson-block" id="lesson-block"></div>
+        <div class="question-block" id="question-block"></div>
+        <div class="score" id="score"></div>
+        <div class="result" id="result"></div>
+        <button class="send-btn" id="send-btn" style="display:none">Отправить результат боту</button>
+        <div class="mini-game" id="mini-game"></div>
+    <div class="history-block" id="history-block"></div>
+    <div id="add-question-block" style="margin-top:18px;"></div>
+    </div>
+    <script>
+    // --- Telegram WebApp API ---
+    let tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+
+    // --- User profile (local only) ---
+    function getProfile() {
+        let name = localStorage.getItem('ruapp_name') || '';
+        if (!name) {
+            name = prompt('Введите ваше имя для личного кабинета:') || 'Ученик';
+            localStorage.setItem('ruapp_name', name);
+        }
+        return name;
+    }
+
+    function showProfile() {
+        const name = getProfile();
+        // Прогресс и достижения
+        const hist = JSON.parse(localStorage.getItem('ruapp_history') || '[]');
+        let total = 0, correct = 0;
+        hist.forEach(h => { total += h.total; correct += h.score; });
+        let progress = total ? ` | Прогресс: ${correct}/${total}` : '';
+        let achievements = '';
+        if (correct >= 10) achievements += '🏅 10+ правильных ответов! ';
+        if (hist.length >= 5) achievements += '🎓 5+ тестов! ';
+        document.getElementById('profile').textContent = `👤 ${name}${progress}`;
+        document.getElementById('achievements').textContent = achievements;
+    }
+
+    // --- Load questions ---
+    let questionsData = [];
+    fetch('questions.json')
+        .then(r => r.json())
+        .then(data => {
+            questionsData = data;
+            showThemes();
+            showProfile();
+            showHistory();
+        });
+
+    // --- Theme selection ---
+    let currentTheme = null;
+    function showThemes() {
+        const themeList = document.getElementById('theme-list');
+        themeList.innerHTML = '';
+        questionsData.forEach((theme, idx) => {
+            const btn = document.createElement('button');
+            btn.className = 'theme-btn' + (currentTheme === idx ? ' selected' : '');
+            btn.textContent = theme.theme;
+            btn.onclick = () => selectTheme(idx);
+            themeList.appendChild(btn);
+        });
+    }
+    function selectTheme(idx) {
+        currentTheme = idx;
+        showThemes();
+        startLesson();
+    }
+
+    // --- Lesson and test logic ---
+    let currentQuestions = [];
+    let currentQuestionIdx = 0;
+    let score = 0;
+    let answers = [];
+
+    function startLesson() {
+        const theme = questionsData[currentTheme];
+        document.getElementById('lesson-block').innerHTML = `<h2>Урок: ${theme.lesson.title}</h2><div>${theme.lesson.content}</div>`;
+        // Случайный порядок вопросов
+        currentQuestions = [...theme.questions].sort(() => Math.random() - 0.5);
+        currentQuestionIdx = 0;
+        score = 0;
+        answers = [];
+        document.getElementById('result').textContent = '';
+        document.getElementById('score').textContent = '';
+        document.getElementById('send-btn').style.display = 'none';
+        showQuestion();
+    }
+
+    function showQuestion() {
+        const block = document.getElementById('question-block');
+        if (currentQuestionIdx >= currentQuestions.length) {
+            finishTest();
+            return;
+        }
+        const q = currentQuestions[currentQuestionIdx];
+        let html = `<div><b>Вопрос ${currentQuestionIdx+1}:</b> ${q.question}</div><div class='options'>`;
+        q.options.forEach((opt, i) => {
+            html += `<button class='option-btn' onclick='answerQuestion(${i})'>${opt}</button>`;
+        });
+        html += '</div>';
+        block.innerHTML = html;
+    }
+
+    window.answerQuestion = function(idx) {
+        const q = currentQuestions[currentQuestionIdx];
+        const isCorrect = idx === q.answer;
+        answers.push({
+            question: q.question,
+            selected: idx,
+            correct: q.answer,
+            result: isCorrect
+        });
+        if (isCorrect) score++;
+        document.getElementById('result').textContent = isCorrect ? 'Верно!' : `Неверно. ${q.explanation}`;
+        document.getElementById('result').style.color = isCorrect ? 'green' : 'red';
+        setTimeout(() => {
+            document.getElementById('result').textContent = '';
+            currentQuestionIdx++;
+            showQuestion();
+        }, 1200);
+    }
+
+    function finishTest() {
+        document.getElementById('question-block').innerHTML = '';
+        document.getElementById('score').textContent = `Ваш результат: ${score} из ${currentQuestions.length}`;
+        document.getElementById('result').textContent = 'Тест завершён!';
+        document.getElementById('result').style.color = 'black';
+        document.getElementById('send-btn').style.display = 'inline-block';
+        saveHistory();
+        showHistory();
+    }
+
+    // --- История прохождения ---
+    function saveHistory() {
+        const name = getProfile();
+        const theme = questionsData[currentTheme].theme;
+        const hist = JSON.parse(localStorage.getItem('ruapp_history') || '[]');
+        hist.unshift({
+            name, theme, score, total: currentQuestions.length, date: new Date().toLocaleString()
+        });
+        localStorage.setItem('ruapp_history', JSON.stringify(hist.slice(0, 10)));
+    }
+    function showHistory() {
+        const hist = JSON.parse(localStorage.getItem('ruapp_history') || '[]');
+        let html = '<b>История:</b><ul style="padding-left:18px">';
+        hist.forEach(h => {
+            html += `<li>${h.date}: <b>${h.name}</b> — <i>${h.theme}</i> — <b>${h.score}/${h.total}</b></li>`;
+        });
+        html += '</ul>';
+        document.getElementById('history-block').innerHTML = html;
+    }
+
+    // --- Отправка результата боту ---
+    document.getElementById('send-btn').onclick = function() {
+        if (tg && tg.sendData) {
+            tg.sendData(JSON.stringify({
+                name: getProfile(),
+                theme: questionsData[currentTheme].theme,
+                score,
+                total: currentQuestions.length,
+                answers
+            }));
+            tg.close && tg.close();
+        } else {
+            alert('Интеграция с Telegram доступна только внутри Telegram.');
+        }
+    };
+
+
+    // --- Мини-игра: Найди ошибку (с подсчётом баллов) ---
+    let miniGameScore = 0;
+    function showMiniGame() {
+        const block = document.getElementById('mini-game');
+        const tasks = [
+            { text: 'Я поехал в Москву на поезде.', error: false },
+            { text: 'Он пришёл домой, и сразу лег спать.', error: false },
+            { text: 'Яблоко упало с дерева.', error: false },
+            { text: 'Я люблю читать книги по вечерам.', error: false },
+            { text: 'Я пошол в магазин.', error: true },
+            { text: 'Она красивая и умная.', error: false },
+            { text: 'Мальчик играл в футбол на улице.', error: false },
+            { text: 'Я сьел яблоко.', error: true }
+        ];
+        const task = tasks[Math.floor(Math.random() * tasks.length)];
+        block.innerHTML = `<b>Мини-игра: Найди ошибку</b> <span style='font-size:0.95em;color:#888'>(баллы: <span id='mini-game-score'>${miniGameScore}</span>)</span><div style='margin:8px 0'>${task.text}</div><button class='option-btn' onclick='checkMiniGame(true)'>Есть ошибка</button> <button class='option-btn' onclick='checkMiniGame(false)'>Нет ошибки</button><div id='mini-game-result'></div>`;
+        window._miniGameTask = task;
+    }
+    window.checkMiniGame = function(ans) {
+        const res = document.getElementById('mini-game-result');
+        if (ans === window._miniGameTask.error) {
+            res.textContent = 'Верно!';
+            res.style.color = 'green';
+            miniGameScore++;
+        } else {
+            res.textContent = window._miniGameTask.error ? 'Ошибка была!' : 'Ошибки не было!';
+            res.style.color = 'red';
+            if (miniGameScore > 0) miniGameScore--;
+        }
+        document.getElementById('mini-game-score').textContent = miniGameScore;
+        setTimeout(showMiniGame, 1200);
+    }
+    showMiniGame();
+
+
+    // --- Добавление своих вопросов (для репетитора, local only) ---
+    function showAddQuestionForm() {
+        const block = document.getElementById('add-question-block');
+        let html = `<b>Добавить свой вопрос</b><form id='add-q-form' style='margin-top:8px;display:flex;flex-direction:column;gap:6px;'>`;
+        html += `<input type='text' id='add-q-theme' placeholder='Тема (например, Орфография)' required maxlength='30'>`;
+        html += `<input type='text' id='add-q-question' placeholder='Вопрос' required maxlength='100'>`;
+        html += `<input type='text' id='add-q-opt1' placeholder='Вариант 1' required maxlength='40'>`;
+        html += `<input type='text' id='add-q-opt2' placeholder='Вариант 2' required maxlength='40'>`;
+        html += `<input type='number' id='add-q-answer' placeholder='Номер правильного варианта (1 или 2)' min='1' max='2' required>`;
+        html += `<input type='text' id='add-q-expl' placeholder='Пояснение к ответу' maxlength='80'>`;
+        html += `<button type='submit' class='option-btn'>Добавить</button></form>`;
+        block.innerHTML = html;
+        document.getElementById('add-q-form').onsubmit = function(e) {
+            e.preventDefault();
+            const theme = document.getElementById('add-q-theme').value.trim();
+            const question = document.getElementById('add-q-question').value.trim();
+            const opt1 = document.getElementById('add-q-opt1').value.trim();
+            const opt2 = document.getElementById('add-q-opt2').value.trim();
+            const answer = parseInt(document.getElementById('add-q-answer').value, 10) - 1;
+            const expl = document.getElementById('add-q-expl').value.trim();
+            if (!theme || !question || !opt1 || !opt2 || (answer !== 0 && answer !== 1)) {
+                alert('Заполните все поля корректно!');
+                return;
+            }
+            // Сохраняем в localStorage
+            let custom = JSON.parse(localStorage.getItem('ruapp_custom_questions') || '[]');
+            custom.push({ theme, question, options: [opt1, opt2], answer, explanation: expl });
+            localStorage.setItem('ruapp_custom_questions', JSON.stringify(custom));
+            alert('Вопрос добавлен!');
+            showAddQuestionForm();
+            loadCustomQuestions();
+        };
+    }
+    showAddQuestionForm();
+
+    // --- Подгрузка своих вопросов в тесты ---
+    function loadCustomQuestions() {
+        let custom = JSON.parse(localStorage.getItem('ruapp_custom_questions') || '[]');
+        if (!custom.length) return;
+        // Группируем по темам
+        let byTheme = {};
+        custom.forEach(q => {
+            if (!byTheme[q.theme]) byTheme[q.theme] = [];
+            byTheme[q.theme].push(q);
+        });
+        // Добавляем к существующим темам или создаём новые
+        Object.keys(byTheme).forEach(themeName => {
+            let idx = questionsData.findIndex(t => t.theme === themeName);
+            if (idx === -1) {
+                questionsData.push({ theme: themeName, lesson: { title: 'Пользовательская тема', content: '' }, questions: byTheme[themeName] });
+            } else {
+                questionsData[idx].questions = questionsData[idx].questions.concat(byTheme[themeName]);
+            }
+        });
+        showThemes();
+    }
+
+    </script>
+</body>
+</html>
